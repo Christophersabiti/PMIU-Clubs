@@ -1,0 +1,448 @@
+// PMI Uganda Clubs — data model
+// Database: Supabase Postgres.
+//   DATABASE_URL → transaction pooler (port 6543, ?pgbouncer=true) used by the app on Vercel
+//   DIRECT_URL   → direct/session connection (port 5432) used by Prisma CLI for schema changes
+// Enum-like fields are strings validated in the application layer.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─── People ────────────────────────────────────────────────────────────────
+
+model User {
+  id             String    @id @default(cuid())
+  email          String    @unique
+  passwordHash   String?
+  googleId       String?   @unique
+  name           String
+  phone          String?
+  photoId        String?
+  organization   String?
+  jobTitle       String?
+  // PMI membership is profile data — never an auth credential
+  isPmiMember    Boolean   @default(false)
+  pmiMemberId    String?
+  pmiChapter     String?
+  certifications String? // comma separated, e.g. "PMP, PMI-ACP"
+  skills         String?
+  interests      String?
+  bio            String?
+  linkedin       String?
+  // SUPER_ADMIN | CHAPTER_ADMIN | MEMBER
+  globalRole     String    @default("MEMBER")
+  // Privacy preferences
+  showInDirectory Boolean  @default(true)
+  showEmail      Boolean   @default(false)
+  showPhone      Boolean   @default(false)
+  showClubs      Boolean   @default(true)
+  showActivity   Boolean   @default(true)
+  emailOptIn     Boolean   @default(true)
+  profileCompleted Boolean @default(false)
+  resetToken     String?   @unique
+  resetTokenExpires DateTime?
+  lastActiveAt   DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  memberships    ClubMembership[]
+  clubRoles      ClubRole[]
+  registrations  EventRegistration[]
+  attendance     EventAttendance[]  @relation("attendee")
+  checkIns       EventAttendance[]  @relation("checker")
+  notifications  Notification[]
+  posts          Post[]
+  uploads        Media[]
+  auditLogs      AuditLog[]
+}
+
+// ─── Clubs ─────────────────────────────────────────────────────────────────
+
+model Club {
+  id               String   @id @default(cuid())
+  slug             String   @unique
+  name             String
+  shortName        String
+  tagline          String?
+  focus            String?
+  summary          String?
+  description      String?
+  vision           String?
+  gains            String? // newline separated "What you'll gain"
+  programme        String? // newline separated "What the club will do"
+  accent           String   @default("#7c3aed")
+  icon             String   @default("users")
+  coverImage       String?
+  whatsappUrl      String?
+  requiresApproval Boolean  @default(true) // all joins need admin approval (2026 pilot policy)
+  targetValue      String? // e.g. "25+"
+  targetLabel      String? // e.g. "members engaged in public-speaking activities"
+  targetDeadline   DateTime?
+  targetNumber     Int? // numeric goal used for progress tracking
+  targetMetric     String? // MEMBERS | ACTIVITIES | COACHES | PROJECTS | SESSIONS
+  active           Boolean  @default(true)
+  sortOrder        Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  memberships   ClubMembership[]
+  roles         ClubRole[]
+  partners      ClubPartner[]
+  initiatives   Initiative[]
+  activities    Activity[]
+  events        Event[]
+  posts         Post[]
+  resources     Resource[]
+  galleries     Gallery[]
+  impactMetrics ImpactMetric[]
+  media         Media[]
+}
+
+model ClubMembership {
+  id         String    @id @default(cuid())
+  userId     String
+  clubId     String
+  // PENDING | ACTIVE | REJECTED | LEFT
+  status     String    @default("PENDING")
+  motivation String?
+  joinedAt   DateTime?
+  decidedById String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  club Club @relation(fields: [clubId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, clubId])
+  @@index([clubId, status])
+}
+
+model ClubRole {
+  id        String   @id @default(cuid())
+  userId    String
+  clubId    String
+  // CLUB_LEAD | CONTENT_MANAGER | EVENT_COORDINATOR | PARTNER_REP
+  role      String
+  title     String? // display title, e.g. "Club Captain"
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  club Club @relation(fields: [clubId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, clubId, role])
+}
+
+// ─── Partners ──────────────────────────────────────────────────────────────
+
+model Partner {
+  id           String    @id @default(cuid())
+  slug         String    @unique
+  name         String
+  logoUrl      String?
+  description  String?
+  expertise    String? // newline separated
+  website      String?
+  contactName  String?
+  contactEmail String?
+  contactPhone String?
+  activeSince  DateTime?
+  // ACTIVE | PROSPECT | INACTIVE
+  status       String    @default("ACTIVE")
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  clubs      ClubPartner[]
+  activities Activity[]
+  events     Event[]
+  resources  Resource[]
+}
+
+model ClubPartner {
+  id            String  @id @default(cuid())
+  clubId        String
+  partnerId     String
+  relationship  String? // e.g. "Strategic partner"
+  provides      String? // what the partner provides
+  memberBenefit String?
+
+  club    Club    @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  partner Partner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  @@unique([clubId, partnerId])
+}
+
+// ─── Club → Initiative → Activity → Event ──────────────────────────────────
+
+model Initiative {
+  id          String    @id @default(cuid())
+  clubId      String
+  title       String
+  description String?
+  startDate   DateTime?
+  endDate     DateTime?
+  // PLANNED | ACTIVE | COMPLETED
+  status      String    @default("ACTIVE")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  club       Club       @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  activities Activity[]
+  events     Event[]
+}
+
+model Activity {
+  id           String    @id @default(cuid())
+  clubId       String
+  initiativeId String?
+  partnerId    String?
+  title        String
+  summary      String?
+  description  String?
+  // SESSION | CHALLENGE | TRAINING | PROJECT | VOLUNTEER | SOCIAL
+  type         String    @default("SESSION")
+  // PLANNED | ACTIVE | COMPLETED
+  status       String    @default("PLANNED")
+  isVolunteer  Boolean   @default(false)
+  startDate    DateTime?
+  endDate      DateTime?
+  coverImage   String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  club       Club        @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  initiative Initiative? @relation(fields: [initiativeId], references: [id], onDelete: SetNull)
+  partner    Partner?    @relation(fields: [partnerId], references: [id], onDelete: SetNull)
+  events     Event[]
+}
+
+model Event {
+  id                   String    @id @default(cuid())
+  clubId               String
+  initiativeId         String?
+  activityId           String?
+  partnerId            String?
+  title                String
+  summary              String?
+  description          String?
+  bannerUrl            String?
+  startsAt             DateTime
+  endsAt               DateTime
+  locationName         String?
+  mapUrl               String?
+  // PHYSICAL | ONLINE | HYBRID
+  mode                 String    @default("PHYSICAL")
+  onlineUrl            String?
+  capacity             Int?
+  registrationDeadline DateTime?
+  facilitator          String?
+  externalRegistrationUrl String?
+  // DRAFT | PUBLISHED | CANCELLED
+  status               String    @default("PUBLISHED")
+  isVolunteer          Boolean   @default(false)
+  impactHours          Float? // credited per attendee; defaults to duration
+  reminderSentAt       DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  club          Club                @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  initiative    Initiative?         @relation(fields: [initiativeId], references: [id], onDelete: SetNull)
+  activity      Activity?           @relation(fields: [activityId], references: [id], onDelete: SetNull)
+  partner       Partner?            @relation(fields: [partnerId], references: [id], onDelete: SetNull)
+  registrations EventRegistration[]
+  attendance    EventAttendance[]
+  galleries     Gallery[]
+
+  @@index([startsAt])
+}
+
+model EventRegistration {
+  id         String   @id @default(cuid())
+  eventId    String
+  userId     String
+  // REGISTERED | WAITLISTED | CANCELLED
+  status     String   @default("REGISTERED")
+  ticketCode String   @unique
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, userId])
+}
+
+model EventAttendance {
+  id            String   @id @default(cuid())
+  eventId       String
+  userId        String
+  checkedInAt   DateTime @default(now())
+  checkedInById String?
+  // QR | MANUAL
+  method        String   @default("QR")
+
+  event     Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user      User  @relation("attendee", fields: [userId], references: [id], onDelete: Cascade)
+  checkedBy User? @relation("checker", fields: [checkedInById], references: [id], onDelete: SetNull)
+
+  @@unique([eventId, userId])
+}
+
+// ─── Content ───────────────────────────────────────────────────────────────
+
+model Post {
+  id          String    @id @default(cuid())
+  clubId      String?
+  // NEWS | ANNOUNCEMENT | IMPACT_STORY
+  type        String    @default("NEWS")
+  title       String
+  slug        String    @unique
+  excerpt     String?
+  body        String
+  coverImage  String?
+  youtubeUrl  String?
+  published   Boolean   @default(true)
+  publishedAt DateTime?
+  views       Int       @default(0)
+  authorId    String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  club   Club? @relation(fields: [clubId], references: [id], onDelete: SetNull)
+  author User? @relation(fields: [authorId], references: [id], onDelete: SetNull)
+}
+
+model Resource {
+  id          String   @id @default(cuid())
+  clubId      String?
+  partnerId   String?
+  title       String
+  description String?
+  // ARTICLE | VIDEO | DOCUMENT | TEMPLATE | LINK
+  type        String   @default("LINK")
+  url         String? // external link or /api/media/:id
+  mediaId     String?
+  isPartnerResource Boolean @default(false)
+  membersOnly Boolean  @default(false)
+  downloads   Int      @default(0)
+  published   Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  club    Club?    @relation(fields: [clubId], references: [id], onDelete: SetNull)
+  partner Partner? @relation(fields: [partnerId], references: [id], onDelete: SetNull)
+}
+
+model Media {
+  id           String   @id @default(cuid())
+  storageKey   String   @unique // generated name — never the user-supplied filename
+  originalName String
+  mimeType     String
+  size         Int
+  // IMAGE | DOCUMENT
+  kind         String
+  alt          String?
+  clubId       String?
+  uploadedById String?
+  createdAt    DateTime @default(now())
+
+  club       Club?          @relation(fields: [clubId], references: [id], onDelete: SetNull)
+  uploadedBy User?          @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+  galleryImages GalleryImage[]
+}
+
+model Gallery {
+  id          String   @id @default(cuid())
+  clubId      String?
+  eventId     String?
+  title       String
+  description String?
+  published   Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  club   Club?          @relation(fields: [clubId], references: [id], onDelete: SetNull)
+  event  Event?         @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  images GalleryImage[]
+}
+
+model GalleryImage {
+  id        String   @id @default(cuid())
+  galleryId String
+  mediaId   String
+  caption   String?
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  gallery Gallery @relation(fields: [galleryId], references: [id], onDelete: Cascade)
+  media   Media   @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+}
+
+// ─── Impact ────────────────────────────────────────────────────────────────
+
+model ImpactMetric {
+  id         String   @id @default(cuid())
+  clubId     String?
+  // PEOPLE_IMPACTED | COMMUNITY_PROJECTS | VOLUNTEER_HOURS | MENTORSHIP_CONNECTIONS
+  // | COACHES_TRAINED | PROFESSIONALS_REACHED | BENEFITS_SECURED | OTHER
+  metric     String
+  label      String
+  value      Float
+  period     String? // e.g. "2026 Pilot", "Nov 2026"
+  note       String?
+  recordedAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  club Club? @relation(fields: [clubId], references: [id], onDelete: SetNull)
+}
+
+// ─── Communications & audit ────────────────────────────────────────────────
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  kind      String    @default("INFO") // INFO | REMINDER | ANNOUNCEMENT | MEMBERSHIP | EVENT
+  title     String
+  body      String?
+  link      String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+}
+
+model EmailLog {
+  id        String   @id @default(cuid())
+  to        String
+  subject   String
+  html      String
+  template  String
+  // SENT | LOGGED | FAILED
+  status    String
+  error     String?
+  createdAt DateTime @default(now())
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String?
+  action    String
+  entity    String
+  entityId  String?
+  details   String?
+  createdAt DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+}
+
+model Setting {
+  key   String @id
+  value String
+}
