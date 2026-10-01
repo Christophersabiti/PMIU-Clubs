@@ -11,7 +11,8 @@ import { del, get, put } from "@vercel/blob";
  *  - generated storage names; the user's filename is only kept as metadata
  *  - authorization is enforced by the calling action/route
  *
- * Backend: Vercel Blob (private store) when BLOB_READ_WRITE_TOKEN is set; otherwise local disk (development only).
+ * Backend: Vercel Blob (private store) when BLOB_STORE_ID (Vercel OIDC auth, set by connecting the store) or
+ * BLOB_READ_WRITE_TOKEN is present; otherwise local disk (development only).
  * Files are always served through /api/media/:id so access and headers stay under app control.
  */
 const MB = 1024 * 1024;
@@ -25,7 +26,7 @@ export type AllowedMime = keyof typeof ALLOWED;
 
 const KEY_RE = /^[a-f0-9]{32}\.(jpg|png|webp|pdf)$/;
 const LOCAL_ROOT = path.join(process.cwd(), "storage", "uploads");
-const blobEnabled = () => !!process.env.BLOB_READ_WRITE_TOKEN;
+const blobEnabled = () => !!(process.env.BLOB_STORE_ID || process.env.BLOB_READ_WRITE_TOKEN);
 const blobPath = (key: string) => `media/${key}`;
 
 export function sniffMime(buf: Buffer): AllowedMime | null {

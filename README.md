@@ -47,10 +47,10 @@ npm run dev          # http://localhost:3000
 Vercel runs the `vercel-build` script on every deploy: `prisma generate` → `prisma migrate deploy` (applies pending migrations) → **bootstrap seed** (only if the database is empty, never wipes) → `next build`.
 
 1. **Neon**: the Neon ↔ Vercel integration injects `DATABASE_URL` and `DATABASE_URL_UNPOOLED`. With preview branching on, each preview deploy gets its own Neon branch, so migrations are tested there first.
-2. **Blob**: Vercel → Storage → create a **private** Blob store and connect it to the project. That adds `BLOB_READ_WRITE_TOKEN`. Uploads are max 4 MB per file (Vercel's request limit is 4.5 MB). Gallery uploads go one photo per request.
+2. **Blob**: Vercel → Storage → create a **private** Blob store and connect it to the project. That adds `BLOB_STORE_ID`, and the SDK authenticates through Vercel OIDC (`BLOB_READ_WRITE_TOKEN` also works). Uploads are max 4 MB per file (Vercel's request limit is 4.5 MB). Gallery uploads go one photo per request.
 3. **Add these in Project → Settings → Environment Variables**: `AUTH_SECRET`, `CRON_SECRET`, `APP_URL` (production URL), `RESEND_API_KEY`, `EMAIL_FROM`, `SEED_ADMIN_EMAIL`, `SEED_ADMIN_NAME`, `SEED_ADMIN_PASSWORD` (12+ chars; change it after first sign-in, then you can delete the `SEED_ADMIN_*` vars).
 4. **Email**: verify your sending domain in Resend and set `EMAIL_FROM` to an address on it.
-5. **Cron**: `vercel.json` runs `/api/cron/reminders` daily at 08:00 EAT. Vercel sends `CRON_SECRET` automatically. On the Pro plan you can make it hourly.
+5. **Cron**: `vercel.json` runs `/api/cron/reminders` hourly (Vercel Pro), reminding registrants within 24 hours of each event. Vercel sends `CRON_SECRET` automatically.
 6. **Schema changes**: edit `prisma/schema.prisma`, run `npm run db:migrate:dev` against a Neon **dev branch** to create a migration, commit it, and the next deploy applies it.
 
 > Search is case-insensitive (`mode: "insensitive"`). Add Postgres full-text indexes if content grows large.
