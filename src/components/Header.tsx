@@ -82,10 +82,10 @@ export async function Header() {
             </>
           ) : (
             <>
-              <Link href="/login" className="hidden rounded-full px-3 py-2 text-sm font-medium hover:bg-brand-50 sm:block">
+              <Link href="/login" className="hidden whitespace-nowrap rounded-full px-3 py-2 text-sm font-medium hover:bg-brand-50 sm:block">
                 Sign in
               </Link>
-              <Link href="/register" className={`${btn.base} ${btn.primary} ${btn.sm}`}>
+              <Link href="/register" className={`${btn.base} ${btn.primary} ${btn.sm} whitespace-nowrap`}>
                 Join a club
               </Link>
             </>

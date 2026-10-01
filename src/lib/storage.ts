@@ -2,6 +2,7 @@ import "server-only";
 import { randomBytes } from "crypto";
 import { mkdir, readFile, writeFile, unlink } from "fs/promises";
 import path from "path";
+import { del, get, put } from "@vercel/blob";
 
 /**
  * Upload policy (OWASP file-upload guidance):
@@ -10,8 +11,7 @@ import path from "path";
  *  - generated storage names; the user's filename is only kept as metadata
  *  - authorization is enforced by the calling action/route
  *
- * Backend: Supabase Storage (private bucket, server-side service-role key) when SUPABASE_URL and
- * SUPABASE_SERVICE_ROLE_KEY are set; otherwise local disk (development only).
+ * Backend: Vercel Blob (private store) when BLOB_READ_WRITE_TOKEN is set; otherwise local disk (development only).
  * Files are always served through /api/media/:id so access and headers stay under app control.
  */
 const MB = 1024 * 1024;
@@ -25,13 +25,8 @@ export type AllowedMime = keyof typeof ALLOWED;
 
 const KEY_RE = /^[a-f0-9]{32}\.(jpg|png|webp|pdf)$/;
 const LOCAL_ROOT = path.join(process.cwd(), "storage", "uploads");
-const BUCKET = process.env.SUPABASE_STORAGE_BUCKET ?? "media";
-
-function supabase() {
-  const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  return url && key ? { url: url.replace(/\/$/, ""), key } : null;
-}
+const blobEnabled = () => !!process.env.BLOB_READ_WRITE_TOKEN;
+const blobPath = (key: string) => `media/${key}`;
 
 export function sniffMime(buf: Buffer): AllowedMime | null {
   if (buf.length < 12) return null;
@@ -42,63 +37,27 @@ export function sniffMime(buf: Buffer): AllowedMime | null {
   return null;
 }
 
-async function ensureBucket(sb: { url: string; key: string }) {
-  const res = await fetch(`${sb.url}/storage/v1/bucket`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${sb.key}`, apikey: sb.key, "Content-Type": "application/json" },
-    body: JSON.stringify({ id: BUCKET, name: BUCKET, public: false, file_size_limit: 4 * MB, allowed_mime_types: Object.keys(ALLOWED) }),
-  });
-  // 200 = created; 400/409 = already exists
-  if (!res.ok && res.status !== 400 && res.status !== 409) throw new Error(`Storage bucket error: ${res.status}`);
-}
-
 export async function saveFile(buf: Buffer, mime: AllowedMime) {
   const storageKey = `${randomBytes(16).toString("hex")}.${ALLOWED[mime].ext}`;
-  const sb = supabase();
-  if (!sb) {
+  if (blobEnabled()) {
+    await put(blobPath(storageKey), buf, { access: "private", contentType: mime, addRandomSuffix: false });
+  } else {
     await mkdir(LOCAL_ROOT, { recursive: true });
     await writeFile(path.join(LOCAL_ROOT, storageKey), buf);
-    return storageKey;
   }
-  const upload = () =>
-    fetch(`${sb.url}/storage/v1/object/${BUCKET}/${storageKey}`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${sb.key}`, apikey: sb.key, "Content-Type": mime, "x-upsert": "false" },
-      body: new Uint8Array(buf),
-    });
-  let res = await upload();
-  if (res.status === 404 || res.status === 400) {
-    const text = await res.text();
-    if (/bucket/i.test(text)) {
-      await ensureBucket(sb);
-      res = await upload();
-    } else throw new Error(`Upload failed: ${text.slice(0, 200)}`);
-  }
-  if (!res.ok) throw new Error(`Upload failed (${res.status})`);
   return storageKey;
 }
 
 export async function readStoredFile(storageKey: string): Promise<Buffer> {
   if (!KEY_RE.test(storageKey)) throw new Error("bad key");
-  const sb = supabase();
-  if (!sb) return readFile(path.join(LOCAL_ROOT, storageKey));
-  const res = await fetch(`${sb.url}/storage/v1/object/authenticated/${BUCKET}/${storageKey}`, {
-    headers: { Authorization: `Bearer ${sb.key}`, apikey: sb.key },
-  });
-  if (!res.ok) throw new Error(`not found (${res.status})`);
-  return Buffer.from(await res.arrayBuffer());
+  if (!blobEnabled()) return readFile(path.join(LOCAL_ROOT, storageKey));
+  const res = await get(blobPath(storageKey), { access: "private" });
+  if (!res || res.statusCode !== 200) throw new Error("not found");
+  return Buffer.from(await new Response(res.stream).arrayBuffer());
 }
 
 export async function deleteStoredFile(storageKey: string) {
   if (!KEY_RE.test(storageKey)) return;
-  const sb = supabase();
-  if (!sb) {
-    await unlink(path.join(LOCAL_ROOT, storageKey)).catch(() => {});
-    return;
-  }
-  await fetch(`${sb.url}/storage/v1/object/${BUCKET}`, {
-    method: "DELETE",
-    headers: { Authorization: `Bearer ${sb.key}`, apikey: sb.key, "Content-Type": "application/json" },
-    body: JSON.stringify({ prefixes: [storageKey] }),
-  }).catch(() => {});
+  if (blobEnabled()) await del(blobPath(storageKey)).catch(() => {});
+  else await unlink(path.join(LOCAL_ROOT, storageKey)).catch(() => {});
 }

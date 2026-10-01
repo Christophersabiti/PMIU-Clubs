@@ -10,17 +10,18 @@ Built from *PMI Uganda Clubs Digital Platform: MVP Product Concept + PRD* and th
 
 ## Quick start
 
-1. Create a Supabase project. Copy `.env.example` to `.env.local` (already created with generated `AUTH_SECRET` and `CRON_SECRET`) and fill in:
-   `DATABASE_URL`, `DIRECT_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `RESEND_API_KEY`, `EMAIL_FROM`, `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD`.
+1. Copy the Neon connection strings into `.env.local` (Neon console → Connect, or `vercel env pull .env.local`):
+   `DATABASE_URL` (pooled) and `DATABASE_URL_UNPOOLED`. `AUTH_SECRET`, `CRON_SECRET` and `SEED_ADMIN_*` are already set.
+   Optional locally: `BLOB_READ_WRITE_TOKEN` (otherwise uploads go to `./storage`), `RESEND_API_KEY` (otherwise emails go to the in-app outbox).
 2. Then:
 
 ```bash
 npm install
-npm run db:setup     # prisma db push → enable RLS (lock Supabase's public API) → seed clubs, partners, programme
+npm run db:setup     # prisma migrate deploy → bootstrap seed (clubs, partners, programme, platform admin) if the DB is empty
 npm run dev          # http://localhost:3000
 ```
 
-`SEED_DEMO=true npm run db:seed` adds demo captains, members and registrations for testing. **Never run that against production**, because `db:seed` clears all tables first.
+`SEED_DEMO=true npm run db:seed` adds demo captains, members and registrations for testing. **Never run `db:seed` against production**, because it clears all tables first. Use a Neon dev branch for testing.
 
 ### Governance (2026 pilot)
 - **One platform administrator** (Super Admin, from `SEED_ADMIN_*`) manages platform roles, partners and settings.
@@ -35,20 +36,22 @@ npm run dev          # http://localhost:3000
 | Layer | Choice | Notes |
 |---|---|---|
 | Frontend | Next.js 16 (App Router, Server Components, Server Actions), Tailwind CSS v4 | Responsive PWA |
-| Data | Prisma ORM on **Supabase Postgres** (pooled `DATABASE_URL` + `DIRECT_URL`) | Relational model per PRD §28–29, RLS locked |
+| Data | Prisma ORM on **Neon Postgres** (pooled `DATABASE_URL` + `DATABASE_URL_UNPOOLED`), versioned migrations in `prisma/migrations` | Relational model per PRD §28–29 |
 | Auth | Email + password (bcrypt, signed JWT httpOnly cookie) and optional Google sign-in | PMI Member ID is profile data, never a credential |
-| Storage | Supabase Storage (private bucket) behind `/api/media/:id`. Local disk fallback in dev | `src/lib/storage.ts` |
+| Storage | **Vercel Blob** (private store) behind `/api/media/:id`. Local disk fallback in dev | `src/lib/storage.ts` |
 | Email | Resend REST API; falls back to an **outbox** visible in Admin › Communications | |
 | QR | `qrcode` (server-rendered SVG) and the browser `BarcodeDetector` scanner | |
 
-### Deploying (Vercel + Supabase + Resend)
+### Deploying (Vercel + Neon + Vercel Blob + Resend)
 
-1. Import the repo into Vercel and add every variable from `.env.example` (Production and Preview). Set `APP_URL` to the production URL.
-2. Database: run `npm run db:setup` once from your machine against the Supabase database (it uses `DIRECT_URL`). After any schema change, run `npm run db:push && npm run db:rls`.
-3. Storage: uploads go to a **private** Supabase Storage bucket (`media`, created automatically on first upload) and are served through `/api/media/:id`. Max 4 MB per file (Vercel's request limit is 4.5 MB). Gallery uploads go one photo per request.
-4. Email: verify your sending domain in Resend and set `EMAIL_FROM` to an address on it.
-5. Cron: `vercel.json` runs `/api/cron/reminders` daily at 08:00 EAT. Vercel sends `CRON_SECRET` automatically. On the Pro plan you can make it hourly.
-6. Security: `prisma/supabase-rls.sql` enables RLS with no policies on every table. The app reaches Postgres only through Prisma on the server, so Supabase's public REST API can't read member data.
+Vercel runs the `vercel-build` script on every deploy: `prisma generate` → `prisma migrate deploy` (applies pending migrations) → **bootstrap seed** (only if the database is empty, never wipes) → `next build`.
+
+1. **Neon**: the Neon ↔ Vercel integration injects `DATABASE_URL` and `DATABASE_URL_UNPOOLED`. With preview branching on, each preview deploy gets its own Neon branch, so migrations are tested there first.
+2. **Blob**: Vercel → Storage → create a **private** Blob store and connect it to the project. That adds `BLOB_READ_WRITE_TOKEN`. Uploads are max 4 MB per file (Vercel's request limit is 4.5 MB). Gallery uploads go one photo per request.
+3. **Add these in Project → Settings → Environment Variables**: `AUTH_SECRET`, `CRON_SECRET`, `APP_URL` (production URL), `RESEND_API_KEY`, `EMAIL_FROM`, `SEED_ADMIN_EMAIL`, `SEED_ADMIN_NAME`, `SEED_ADMIN_PASSWORD` (12+ chars; change it after first sign-in, then you can delete the `SEED_ADMIN_*` vars).
+4. **Email**: verify your sending domain in Resend and set `EMAIL_FROM` to an address on it.
+5. **Cron**: `vercel.json` runs `/api/cron/reminders` daily at 08:00 EAT. Vercel sends `CRON_SECRET` automatically. On the Pro plan you can make it hourly.
+6. **Schema changes**: edit `prisma/schema.prisma`, run `npm run db:migrate:dev` against a Neon **dev branch** to create a migration, commit it, and the next deploy applies it.
 
 > Search is case-insensitive (`mode: "insensitive"`). Add Postgres full-text indexes if content grows large.
 
@@ -119,8 +122,9 @@ src/app/api/              media, resources, ICS, CSV export, Google OAuth, cron
 |---|---|
 | `npm run dev` | Development server |
 | `npm run build` / `npm start` | Production build and serve |
-| `npm run db:setup` | Push schema, enable RLS, seed (first run) |
-| `npm run db:push` / `db:rls` | Sync schema / re-apply RLS lockdown |
+| `npm run db:setup` | Apply migrations, then bootstrap-seed an empty database |
+| `npm run db:migrate` / `db:migrate:dev` | Apply migrations / create a new migration (use a Neon dev branch) |
+| `npm run db:bootstrap` | Seed only if the database is empty (what Vercel runs) |
 | `npm run db:seed` | **Clear** and re-seed the database |
 | `npm run db:studio` | Prisma Studio |
 | `npm run lint` | ESLint |

@@ -11,6 +11,8 @@ export default async function Settings() {
   await requireChapterAdmin();
   const s = Object.fromEntries((await db.setting.findMany()).map((r) => [r.key, r.value]));
   const integrations = [
+    { name: "Database (Neon)", on: !!process.env.DATABASE_URL },
+    { name: "File storage (Vercel Blob)", on: !!process.env.BLOB_READ_WRITE_TOKEN },
     { name: "Email (Resend)", on: !!process.env.RESEND_API_KEY },
     { name: "Google sign-in", on: !!process.env.GOOGLE_CLIENT_ID },
     { name: "Reminder cron secret", on: !!process.env.CRON_SECRET },

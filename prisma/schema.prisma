@@ -1,7 +1,7 @@
 // PMI Uganda Clubs — data model
-// Database: Supabase Postgres.
-//   DATABASE_URL → transaction pooler (port 6543, ?pgbouncer=true) used by the app on Vercel
-//   DIRECT_URL   → direct/session connection (port 5432) used by Prisma CLI for schema changes
+// Database: Neon serverless Postgres (via the Neon ↔ Vercel integration).
+//   DATABASE_URL           → pooled connection (host contains "-pooler"), used by the app at runtime
+//   DATABASE_URL_UNPOOLED  → direct connection, used by Prisma CLI (migrate deploy / db push)
 // Enum-like fields are strings validated in the application layer.
 
 generator client {
@@ -11,7 +11,7 @@ generator client {
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
+  directUrl = env("DATABASE_URL_UNPOOLED")
 }
 
 // ─── People ────────────────────────────────────────────────────────────────

@@ -3,6 +3,8 @@
  * Environment:
  *   SEED_ADMIN_EMAIL / SEED_ADMIN_NAME / SEED_ADMIN_PASSWORD  – the single platform administrator
  *   SEED_DEMO=false  – production seed: clubs, partners, programme and content only (no demo people)
+ *   SEED_MODE=bootstrap – used by `vercel-build`: seeds ONLY an empty database (no wipe, no demo people);
+ *                         skips quietly when data exists or the admin env vars are missing
  * Demo accounts all use DEMO_PASSWORD — never run the demo seed against production. */
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
@@ -10,13 +12,20 @@ import { randomBytes } from "crypto";
 
 const db = new PrismaClient();
 const DEMO_PASSWORD = "ClubsDemo2026!";
-const WITH_DEMO = process.env.SEED_DEMO !== "false";
+const BOOTSTRAP = process.env.SEED_MODE === "bootstrap";
+const WITH_DEMO = !BOOTSTRAP && process.env.SEED_DEMO !== "false";
 const at = (iso: string) => new Date(`${iso}+03:00`); // Kampala time
 const ticket = () => randomBytes(9).toString("base64url");
 
 async function main() {
-  // wipe (order matters for FKs)
-  for (const t of [
+  if (BOOTSTRAP) {
+    if ((await db.club.count()) > 0) return console.log("Bootstrap: database already has data — skipping.");
+    if (!process.env.SEED_ADMIN_EMAIL || (process.env.SEED_ADMIN_PASSWORD ?? "").length < 12)
+      return console.warn("Bootstrap: SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD (12+ chars) not set — skipping initial seed.");
+    console.log("Bootstrap: empty database — loading clubs, partners, programme and platform administrator.");
+  }
+  // wipe (order matters for FKs) — never in bootstrap mode
+  if (!BOOTSTRAP) for (const t of [
     "auditLog", "emailLog", "notification", "galleryImage", "gallery", "media", "resource", "post", "impactMetric",
     "eventAttendance", "eventRegistration", "event", "activity", "initiative", "clubPartner", "partner", "clubRole",
     "clubMembership", "club", "user", "setting",
